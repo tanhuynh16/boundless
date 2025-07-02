@@ -105,7 +105,7 @@ install_packages() {
 install_gpu_drivers() {
     info "Detecting and installing appropriate GPU drivers..."
     {
-        sudo ubuntu-drivers install
+        ubuntu-drivers install
     } >> "$LOG_FILE" 2>&1
     success "GPU drivers installed successfully."
 }
