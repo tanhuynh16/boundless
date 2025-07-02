@@ -182,7 +182,7 @@ install_docker() {
             curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
             # Set up the stable repository
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
             # Update package index
             apt update -y
@@ -211,7 +211,7 @@ add_user_to_docker_group() {
     else
         info "Adding user '$username' to the 'docker' group..."
         {
-            sudo usermod -aG docker "$username"
+            usermod -aG docker "$username"
         } >> "$LOG_FILE" 2>&1
         success "User '$username' added to the 'docker' group."
         info "To apply the new group membership, please log out and log back in."
@@ -233,17 +233,17 @@ install_nvidia_container_toolkit() {
         # Add the package repositories
         local distribution
         distribution=$(grep '^ID=' /etc/os-release | cut -d'=' -f2 | tr -d '"')$(grep '^VERSION_ID=' /etc/os-release | cut -d'=' -f2 | tr -d '"')
-        curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
-        curl -s -L https://nvidia.github.io/nvidia-docker/"$distribution"/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+        curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | apt-key add -
+        curl -s -L https://nvidia.github.io/nvidia-docker/"$distribution"/nvidia-docker.list | tee /etc/apt/sources.list.d/nvidia-docker.list
 
         # Update the package lists
-        sudo apt update -y
+        apt update -y
 
         # Install the NVIDIA Docker support
-        sudo apt install -y nvidia-docker2
+        apt install -y nvidia-docker2
 
         # Restart Docker to apply changes
-        sudo systemctl restart docker
+        systemctl restart docker
     } >> "$LOG_FILE" 2>&1
 
     success "NVIDIA Container Toolkit installed successfully."
@@ -255,10 +255,10 @@ configure_docker_nvidia() {
 
     {
         # Create Docker daemon configuration directory if it doesn't exist
-        sudo mkdir -p /etc/docker
+        mkdir -p /etc/docker
 
         # Create or overwrite daemon.json with NVIDIA runtime configuration
-        sudo tee /etc/docker/daemon.json <<EOF
+        tee /etc/docker/daemon.json <<EOF
 {
     "default-runtime": "nvidia",
     "runtimes": {
@@ -271,7 +271,7 @@ configure_docker_nvidia() {
 EOF
 
         # Restart Docker to apply the new configuration
-        sudo systemctl restart docker
+        systemctl restart docker
     } >> "$LOG_FILE" 2>&1
 
     success "Docker configured to use NVIDIA runtime by default."
@@ -281,8 +281,8 @@ EOF
 cleanup() {
     info "Cleaning up unnecessary packages..."
     {
-        sudo apt autoremove -y
-        sudo apt autoclean -y
+        apt autoremove -y
+        apt autoclean -y
     } >> "$LOG_FILE" 2>&1
     success "Cleanup completed."
 }
