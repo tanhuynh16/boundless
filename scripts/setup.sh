@@ -96,7 +96,7 @@ install_packages() {
 
     info "Installing essential packages: ${packages[*]}..."
     {
-        sudo apt install -y "${packages[@]}"
+        apt install -y "${packages[@]}"
     } >> "$LOG_FILE" 2>&1
     success "Essential packages installed successfully."
 }
