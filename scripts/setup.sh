@@ -142,7 +142,7 @@ install_just() {
     {
         # Install the latest pre-built binary straight to /usr/local/bin
         curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
-        | sudo bash -s -- --to /usr/local/bin
+        | bash -s -- --to /usr/local/bin
     } >> "$LOG_FILE" 2>&1
 
     success "'just' installed successfully."
@@ -176,25 +176,25 @@ install_docker() {
         info "Installing Docker..."
         {
             # Install prerequisites
-            sudo apt install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common
+            apt install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common
 
             # Add Docker’s official GPG key
-            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
             # Set up the stable repository
             echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
             # Update package index
-            sudo apt update -y
+            apt update -y
 
             # Install Docker Engine, CLI, and Containerd
-            sudo apt install -y docker-ce docker-ce-cli containerd.io
+            apt install -y docker-ce docker-ce-cli containerd.io
 
             # Enable Docker
-            sudo systemctl enable docker
+            systemctl enable docker
 
             # Start Docker Service
-            sudo systemctl start docker
+            systemctl start docker
 
         } >> "$LOG_FILE" 2>&1
         success "Docker installed and started successfully."
