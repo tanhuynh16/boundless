@@ -74,8 +74,8 @@ check_os() {
 update_system() {
     info "Updating and upgrading the system packages..."
     {
-        sudo apt update -y
-        sudo apt upgrade -y
+        apt update -y
+        apt upgrade -y
     } >> "$LOG_FILE" 2>&1
     success "System packages updated and upgraded successfully."
 }
