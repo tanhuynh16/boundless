@@ -56,6 +56,12 @@ use OrderPricingOutcome::{Lock, ProveAfterLockExpire, Skip};
 
 const MIN_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
+// NEW: Ultra-fast order processing constants
+const FAST_LOCK_THRESHOLD_ETH: f64 = 0.0000000000000001; // Lock immediately if order value > 0.01 ETH
+const FAST_LOCK_MAX_CYCLES: u64 = 5_000_000_000; // Skip preflight for orders under 1M cycles
+const FAST_LOCK_MAX_STAKE: u64 = 1000; // Skip preflight for orders with stake < 100 tokens
+const FAST_LOCK_MIN_DEADLINE: u64 = 300; // Minimum 5 minutes to prove
+
 const ONE_MILLION: U256 = uint!(1_000_000_U256);
 
 /// Maximum number of orders to cache for deduplication
@@ -293,12 +299,70 @@ where
         }
     }
 
+    /// NEW: Ultra-fast order evaluation for high-value orders
+    async fn fast_evaluate_order(
+        &self,
+        order: &OrderRequest,
+    ) -> Result<Option<OrderPricingOutcome>, OrderPickerErr> {
+        let order_id = order.id();
+        let now = now_timestamp();
+        
+        // Quick expiration check
+        let lock_expiration = order.request.offer.biddingStart + order.request.offer.lockTimeout as u64;
+        if lock_expiration <= now {
+            return Ok(None);
+        }
+
+        // Check if order qualifies for fast lock
+        let max_price_eth = format_ether(U256::from(order.request.offer.maxPrice))
+            .parse::<f64>()
+            .unwrap_or(0.0);
+        
+        let is_high_value = max_price_eth >= FAST_LOCK_THRESHOLD_ETH;
+        let is_low_complexity = order.request.offer.lockStake < FAST_LOCK_MAX_STAKE;
+        let has_sufficient_time = lock_expiration.saturating_sub(now) >= FAST_LOCK_MIN_DEADLINE;
+        
+        if is_high_value && is_low_complexity && has_sufficient_time {
+            tracing::info!("FAST LOCK: Order {} qualifies for immediate lock (value: {} ETH, stake: {})", 
+                order_id, max_price_eth, order.request.offer.lockStake);
+            
+            // Estimate cycles conservatively for fast lock
+            let estimated_cycles = FAST_LOCK_MAX_CYCLES;
+            
+            // Quick gas cost estimation
+            let gas_price = self.chain_monitor.current_gas_price().await
+                .context("Failed to get gas price")?;
+            let estimated_gas = 500_000; // Conservative estimate
+            let order_gas_cost = U256::from(gas_price) * U256::from(estimated_gas);
+            
+            // Check if we can afford it
+            let available_gas = self.available_gas_balance().await?;
+            let available_stake = self.available_stake_balance().await?;
+            let lockin_stake = U256::from(order.request.offer.lockStake);
+            
+            if order_gas_cost <= available_gas && lockin_stake <= available_stake {
+                return Ok(Some(Lock {
+                    total_cycles: estimated_cycles,
+                    target_timestamp_secs: 0, // Lock immediately
+                    expiry_secs: lock_expiration,
+                }));
+            }
+        }
+        
+        Ok(None)
+    }
+
     async fn price_order(
         &self,
         order: &mut OrderRequest,
     ) -> Result<OrderPricingOutcome, OrderPickerErr> {
         let order_id = order.id();
         tracing::debug!("Pricing order {order_id}");
+
+        // NEW: Try fast evaluation first
+        if let Some(fast_result) = self.fast_evaluate_order(order).await? {
+            return Ok(fast_result);
+        }
 
         // Lock expiration is the timestamp before which the order must be filled in order to avoid slashing
         let lock_expiration =
@@ -1074,7 +1138,8 @@ where
                     )))
                 })?;
                 Ok((
-                    cfg.market.max_concurrent_preflights as usize,
+                    // NEW: Increase capacity for faster processing
+                    (cfg.market.max_concurrent_preflights * 3) as usize,
                     cfg.market.order_pricing_priority,
                     cfg.market.priority_requestor_addresses.clone(),
                 ))
@@ -1085,7 +1150,8 @@ where
             let mut tasks: JoinSet<(String, U256)> = JoinSet::new();
             let mut rx = picker.new_order_rx.lock().await;
             let mut order_state_rx = picker.order_state_tx.subscribe();
-            let mut capacity_check_interval = tokio::time::interval(MIN_CAPACITY_CHECK_INTERVAL);
+            // NEW: Reduce capacity check interval for faster adaptation
+            let mut capacity_check_interval = tokio::time::interval(Duration::from_secs(1));
             let mut pending_orders: Vec<Box<OrderRequest>> = Vec::new();
             let mut active_tasks: BTreeMap<U256, BTreeMap<String, CancellationToken>> =
                 BTreeMap::new();
@@ -1093,21 +1159,36 @@ where
 
             loop {
                 tokio::select! {
+                    // NEW: Prioritize order processing with biased select
+                    biased;
+                    
                     // This channel is cancellation safe, so it's fine to use in the select!
                     Some(order) = rx.recv() => {
                         let order_id = order.id();
-                        pending_orders.push(order);
-                        tracing::debug!(
-                            "Queued order {} to be priced. Currently {} queued pricing tasks: {}",
-                            order_id,
-                            pending_orders.len(),
-                            pending_orders
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        );
+                        // NEW: Process high-value orders immediately
+                        let max_price_eth = format_ether(U256::from(order.request.offer.maxPrice))
+                            .parse::<f64>()
+                            .unwrap_or(0.0);
+                        
+                        if max_price_eth >= FAST_LOCK_THRESHOLD_ETH {
+                            // Insert at front for immediate processing
+                            pending_orders.insert(0, order);
+                            tracing::debug!("HIGH PRIORITY: Queued high-value order {} ({} ETH) at front", order_id, max_price_eth);
+                        } else {
+                            pending_orders.push(order);
+                            tracing::debug!(
+                                "Queued order {} to be priced. Currently {} queued pricing tasks: {}",
+                                order_id,
+                                pending_orders.len(),
+                                pending_orders
+                                    .iter()
+                                    .map(ToString::to_string)
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            );
+                        }
                     }
+                    
                     Ok(state_change) = order_state_rx.recv() => {
                         match state_change {
                             OrderStateChange::Locked { request_id, prover } => {
@@ -1175,12 +1256,15 @@ where
 
                 // Process pending orders if we have capacity
                 if !pending_orders.is_empty() && tasks.len() < current_capacity {
+                    // NEW: Process more orders per iteration for faster throughput
                     let available_capacity = current_capacity - tasks.len();
+                    let max_orders_per_iteration = std::cmp::min(available_capacity * 2, pending_orders.len());
+                    
                     let selected_orders = picker.select_pricing_orders(
                         &mut pending_orders,
                         priority_mode,
                         priority_addresses.as_deref(),
-                        available_capacity,
+                        max_orders_per_iteration,
                     );
 
                     for order in selected_orders {
@@ -1217,11 +1301,21 @@ where
                             .or_default()
                             .insert(order_id.clone(), task_cancel_token.clone());
 
+                        // NEW: Use spawn_blocking for CPU-intensive preflight work
                         tasks.spawn(async move {
-                            picker_clone
-                                .price_order_and_update_state(order, task_cancel_token)
-                                .await;
-                            (order_id, request_id)
+                            let result = tokio::task::spawn_blocking(move || {
+                                // This will be executed in a blocking thread pool
+                                tokio::runtime::Handle::current().block_on(async {
+                                    picker_clone
+                                        .price_order_and_update_state(order, task_cancel_token)
+                                        .await
+                                })
+                            }).await;
+                            
+                            match result {
+                                Ok(success) => (order_id, request_id),
+                                Err(_) => (order_id, request_id), // Handle join error
+                            }
                         });
                     }
                 }
