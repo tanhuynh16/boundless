@@ -22,8 +22,8 @@ x-agent-common: &agent-common
 
 x-exec-agent-common: &exec-agent-common
   <<: *agent-common
-  mem_limit: 4G
-  cpus: 3
+  mem_limit: 5G
+  cpus: 5
   environment:
     <<: *base-environment
     LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-/usr/local/cuda-12.2/compat/}
@@ -53,6 +53,8 @@ x-broker-common: &broker-common
     - gpu_prove_agent0
     - exec_agent0
     - exec_agent1
+    - exec_agent2
+    - exec_agent3
     - aux_agent
     - snark_agent
     - redis
@@ -142,10 +144,16 @@ services:
   exec_agent1:
     <<: *exec-agent-common
 
+  exec_agent2:
+    <<: *exec-agent-common
+
+  exec_agent3:
+    <<: *exec-agent-common
+
   aux_agent:
     <<: *agent-common
     mem_limit: 256M
-    cpus: 1
+    cpus: 2
     environment:
       <<: *base-environment
       LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-/usr/local/cuda-12.2/compat/}
@@ -155,8 +163,8 @@ services:
   gpu_prove_agent0:
     <<: *agent-common
     runtime: nvidia
-    mem_limit: 4G
-    cpus: 4
+    mem_limit: 10G
+    cpus: 10
     entrypoint: /app/agent -t prove --redis-ttl ${REDIS_TTL:-57600}
 
     # comment-out if running in CPU proving mode

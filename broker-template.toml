@@ -4,12 +4,12 @@
 # This price is multiplied the number of mega-cycles (i.e. million RISC-V cycles) that the requested
 # execution took, as calculated by running the request in preflight. This is one of the inputs to
 # decide the minimum price to accept for a request.
-mcycle_price = "0.0000005"
+mcycle_price = "0.000000000001"
 # Mega-cycle price, denominated in the Boundless staking token.
 #
 # Similar to the mcycle_price option above. This is used to determine the minimum price to accept an
 # order when paid in staking tokens, as is the case for orders with an expired lock.
-mcycle_price_stake_token = "0.0001"
+mcycle_price_stake_token = "0.000001"
 # Optional priority requestor addresses that can bypass the mcycle limit and max input size limit.
 #
 # If enabled, the order will be preflighted without constraints.
@@ -22,24 +22,24 @@ priority_requestor_addresses = [
 # Used to estimate proving capacity and accept only as much work as the prover can handle. Estimates
 # can be derived from benchmarking using Bento CLI or from data based on fulfilling market orders.
 # For more information, see https://docs.beboundless.xyz/provers/broker#benchmarking-bento
-peak_prove_khz = 100
+peak_prove_khz = 1000
 # Optional max cycles (in mcycles)
 #
 # Orders over this max_cycles will be skipped after preflight
-max_mcycle_limit = 8000
+max_mcycle_limit = 12000
 # Max journal size in bytes
 #
 # Orders that produce a journal larger than this size in preflight will be skipped. Since journals
 # must be posted onchain to complete an order, an excessively large journal may prevent completion
 # of a request.
-max_journal_bytes = 10000
+max_journal_bytes = 15000
 # Min seconds left before the deadline to consider bidding on a request.
 # 
 # If there is not enough time left before the deadline, the prover may not be able to complete
 # proving of the request and finalize the batch for publishing before expiration.
 min_deadline = 300
 # On startup, the number of blocks to look back for possible open orders.
-lookback_blocks = 300 # 300 blocks ~ 1 hour @ 12s block times
+lookback_blocks = 120 # 300 blocks ~ 1 hour @ 12s block times
 # Max stake amount, denominated in the Boundless staking token.
 #
 # Requests that require a higher stake than this will not be considered.
@@ -51,11 +51,11 @@ max_file_size = 50_000_000
 # Max concurrent locks
 #
 # Maximum number of concurrent proofs that can be processed at once
-max_concurrent_proofs = 2
+max_concurrent_proofs = 4
 # Maximum number of orders to concurrently work on pricing
 #
 # Used to limit pricing tasks spawned to prevent overwhelming the system
-#max_concurrent_preflights = 4
+max_concurrent_preflights = 4
 # Order pricing priority mode
 #
 # Determines how orders are prioritized for pricing. Options:
@@ -87,7 +87,7 @@ max_critical_task_retries = 10
 # Optional additional gas to add to the transaction for lockinRequest, good
 # for increasing the priority if competing with multiple provers during the
 # same block
-#lockin_priority_gas = 100
+lockin_priority_gas = 1000000
 # Optional balance warning threshold (in native token)
 #
 # If the submitter balance drops below this the broker will issue warning logs
@@ -112,7 +112,7 @@ stake_balance_error_threshold = "5"
 #
 # Used for estimating the gas costs associated with an order during pricing. If not set a
 # conservative default will be used.
-#lockin_gas_estimate = 200000
+lockin_gas_estimate = 1300000
 # Gas estimate for fulfill call
 #
 # Used for estimating the gas costs associated with an order during pricing. If not set a
