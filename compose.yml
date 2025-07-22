@@ -23,8 +23,8 @@ x-agent-common: &agent-common
 
 x-exec-agent-common: &exec-agent-common
   <<: *agent-common
-  mem_limit: 4G
-  cpus: 3
+  mem_limit: 5G
+  cpus: 5
   environment:
     <<: *base-environment
     RISC0_KECCAK_PO2: ${RISC0_KECCAK_PO2:-17}
@@ -53,6 +53,8 @@ x-broker-common: &broker-common
     - gpu_prove_agent0
     - exec_agent0
     - exec_agent1
+    - exec_agent2
+    - exec_agent3
     - aux_agent
     - snark_agent
     - redis
@@ -141,18 +143,24 @@ services:
 
   exec_agent1:
     <<: *exec-agent-common
+    
+  exec_agent2:
+    <<: *exec-agent-common
+    
+  exec_agent3:
+    <<: *exec-agent-common
 
   aux_agent:
     <<: *agent-common
     mem_limit: 256M
-    cpus: 1
+    cpus: 2
 
     entrypoint: /app/agent -t aux --monitor-requeue
 
   gpu_prove_agent0:
     <<: *agent-common
-    mem_limit: 4G
-    cpus: 4
+    mem_limit: 10G
+    cpus: 10
     entrypoint: /app/agent -t prove
 
     # comment-out if running in CPU proving mode
