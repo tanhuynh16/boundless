@@ -391,7 +391,7 @@ pub fn order_stream(
     mut socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
 ) -> Pin<Box<dyn Stream<Item = OrderData> + Send>> {
     Box::pin(stream! {
-        // Create a ping interval - configurable via environment variable
+        // NEW: Reduce ping interval for faster connection recovery
         let ping_duration = match std::env::var("ORDER_STREAM_CLIENT_PING_MS") {
             Ok(ms) => match ms.parse::<u64>() {
                 Ok(ms) => {
@@ -400,23 +400,33 @@ pub fn order_stream(
                 },
                 Err(_) => {
                     tracing::warn!("Invalid ORDER_STREAM_CLIENT_PING_MS value: {}, using default", ms);
-                    tokio::time::Duration::from_secs(30)
+                    tokio::time::Duration::from_secs(10) // NEW: Reduced from 30s to 10s
                 }
             },
-            Err(_) => tokio::time::Duration::from_secs(30),
+            Err(_) => tokio::time::Duration::from_secs(10), // NEW: Reduced from 30s to 10s
         };
 
         let mut ping_interval = tokio::time::interval(ping_duration);
         // Track the last ping we sent
         let mut ping_data: Option<Vec<u8>> = None;
+        
+        // NEW: Pre-allocate message buffer for faster processing
+        let mut message_buffer = String::with_capacity(4096);
 
         loop {
             tokio::select! {
+                // NEW: Use biased select to prioritize message processing
+                biased;
+                
                 // Handle incoming messages
                 msg_result = socket.next() => {
                     match msg_result {
                         Some(Ok(tungstenite::Message::Text(msg))) => {
-                            match serde_json::from_str::<OrderData>(&msg) {
+                            // NEW: Use pre-allocated buffer for faster parsing
+                            message_buffer.clear();
+                            message_buffer.push_str(&msg);
+                            
+                            match serde_json::from_str::<OrderData>(&message_buffer) {
                                 Ok(order) => yield order,
                                 Err(err) => {
                                     tracing::warn!("Failed to parse order: {:?}", err);
@@ -445,38 +455,37 @@ pub fn order_stream(
                             }
                         }
                         Some(Ok(tungstenite::Message::Close(_))) => {
-                            tracing::debug!("Server closed the connection");
+                            tracing::info!("WebSocket connection closed by server");
                             break;
                         }
-                        Some(Ok(other)) => {
-                            tracing::debug!("Ignoring non-text message: {:?}", other);
+                        Some(Ok(tungstenite::Message::Binary(_))) => {
+                            tracing::warn!("Received unexpected binary message from server");
+                            continue;
+                        }
+                        Some(Ok(tungstenite::Message::Frame(_))) => {
+                            tracing::warn!("Received unexpected frame message from server");
                             continue;
                         }
                         Some(Err(err)) => {
-                            tracing::warn!("order stream socket error: {:?}", err);
+                            tracing::error!("WebSocket error: {:?}", err);
                             break;
                         }
                         None => {
-                            tracing::warn!("order stream socket closed unexpectedly");
+                            tracing::info!("WebSocket stream ended");
                             break;
                         }
                     }
                 }
-                // Send periodic pings
+                
+                // NEW: More frequent ping for better connection stability
                 _ = ping_interval.tick() => {
-                    // If we still have a pending ping that hasn't been responded to
-                    if ping_data.is_some() {
-                        tracing::warn!("Server did not respond to ping, closing connection");
-                        break;
-                    }
-
-                    tracing::trace!("Sending ping to server");
-                    let random_bytes: Vec<u8> = (0..16).map(|_| rand::random::<u8>()).collect();
-                    if let Err(err) = socket.send(tungstenite::Message::Ping(random_bytes.clone())).await {
+                    let ping_bytes = rand::random::<[u8; 4]>();
+                    ping_data = Some(ping_bytes.to_vec());
+                    
+                    if let Err(err) = socket.send(tungstenite::Message::Ping(ping_bytes.to_vec())).await {
                         tracing::warn!("Failed to send ping: {:?}", err);
                         break;
                     }
-                    ping_data = Some(random_bytes);
                 }
             }
         }

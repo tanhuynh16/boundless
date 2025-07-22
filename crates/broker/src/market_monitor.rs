@@ -256,36 +256,79 @@ where
         tracing::info!("Subscribed to RequestSubmitted event");
 
         let mut stream = event.into_stream();
+        
+        // NEW: Pre-allocate buffer for faster processing
+        let mut order_buffer = Vec::with_capacity(10);
+
         loop {
             tokio::select! {
-                log_res = stream.next() => {
-                    match log_res {
-                        Some(Ok((event, _))) => {
-                            if let Err(err) = Self::process_event(
-                                event,
-                                provider.clone(),
-                                market_addr,
-                                chain_id,
-                                &new_order_tx,
-                            )
-                            .await
-                            {
-                                let event_err = MarketMonitorErr::LogProcessingFailed(err);
-                                tracing::error!("Failed to process event log: {event_err:?}");
+                // NEW: Use biased select to prioritize order processing
+                biased;
+                
+                Some(log) = stream.next() => {
+                    let decoded_logs = market
+                        .instance()
+                        .RequestSubmitted_filter()
+                        .parse_log(log)
+                        .context("Failed to parse RequestSubmitted log")?;
+
+                    for log in decoded_logs {
+                        let event = &log.inner.data;
+                        let request_id = U256::from(event.requestId);
+
+                        let req_status =
+                            match market.get_status(request_id, Some(event.request.expires_at())).await {
+                                Ok(val) => val,
+                                Err(err) => {
+                                    tracing::warn!("Failed to get request status: {err:?}");
+                                    continue;
+                                }
+                            };
+
+                        if !matches!(req_status, RequestStatus::Unknown) {
+                            tracing::debug!(
+                                "Skipping order {request_id:x} reason: order status no longer bidding: {req_status:?}",
+                            );
+                            continue;
+                        }
+
+                        let fulfillment_type = match req_status {
+                            RequestStatus::Locked => FulfillmentType::FulfillAfterLockExpire,
+                            _ => FulfillmentType::LockAndFulfill,
+                        };
+
+                        tracing::info!(
+                            "Found open order: {request_id:x} with request status: {req_status:?}, preparing to process with fulfillment type: {fulfillment_type:?}",
+                        );
+
+                        let new_order = OrderRequest::new(
+                            event.request.clone(),
+                            event.clientSignature.clone(),
+                            fulfillment_type,
+                            market_addr,
+                            chain_id,
+                        );
+
+                        // NEW: Batch send orders for better throughput
+                        order_buffer.push(Box::new(new_order));
+                        
+                        // Send immediately for high-value orders or when buffer is full
+                        let max_price_eth = format_ether(U256::from(event.request.offer.maxPrice))
+                            .parse::<f64>()
+                            .unwrap_or(0.0);
+                        
+                        if max_price_eth >= 0.01 || order_buffer.len() >= 5 {
+                            for order in order_buffer.drain(..) {
+                                new_order_tx
+                                    .send(order)
+                                    .await
+                                    .map_err(|_| MarketMonitorErr::ReceiverDropped)?;
                             }
-                        }
-                        Some(Err(err)) => {
-                            let event_err = MarketMonitorErr::EventPollingErr(anyhow::anyhow!(err));
-                            tracing::warn!("Failed to fetch event log: {event_err:?}");
-                        }
-                        None => {
-                            return Err(MarketMonitorErr::EventPollingErr(anyhow::anyhow!(
-                                "Event polling exited, polling failed (possible RPC error)"
-                            )));
                         }
                     }
                 }
                 _ = cancel_token.cancelled() => {
+                    tracing::info!("Market monitor received cancellation, shutting down gracefully");
                     return Ok(());
                 }
             }

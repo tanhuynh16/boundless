@@ -68,8 +68,14 @@ impl OffchainMarketMonitor {
         let mut stream = order_stream(socket);
         tracing::info!("Subscribed to offchain Order stream");
 
+        // NEW: Pre-allocate buffer for faster processing
+        let mut order_buffer = Vec::with_capacity(10);
+
         loop {
             tokio::select! {
+                // NEW: Use biased select to prioritize order processing
+                biased;
+                
                 order_data = stream.next() => {
                     match order_data {
                         Some(order_data) => {
@@ -87,14 +93,21 @@ impl OffchainMarketMonitor {
                                 client.chain_id,
                             );
 
-                            if let Err(e) = new_order_tx.send(Box::new(new_order)).await {
-                                tracing::error!("Failed to send new order to broker: {}", e);
-                                return Err(OffchainMarketMonitorErr::ReceiverDropped);
-                            } else {
-                                tracing::trace!(
-                                    "Sent new off-chain order {:x} to OrderPicker via channel.",
-                                    order_data.id
-                                );
+                            // NEW: Batch send orders for better throughput
+                            order_buffer.push(Box::new(new_order));
+                            
+                            // Send immediately for high-value orders or when buffer is full
+                            let max_price_eth = format_ether(U256::from(order_data.order.request.offer.maxPrice))
+                                .parse::<f64>()
+                                .unwrap_or(0.0);
+                            
+                            if max_price_eth >= 0.01 || order_buffer.len() >= 5 {
+                                for order in order_buffer.drain(..) {
+                                    if let Err(e) = new_order_tx.send(order).await {
+                                        tracing::error!("Failed to send new order to broker: {}", e);
+                                        return Err(OffchainMarketMonitorErr::ReceiverDropped);
+                                    }
+                                }
                             }
                         }
                         None => {
